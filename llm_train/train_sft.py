@@ -101,9 +101,13 @@ def main():
     block_size = sft_cfg["block_size"]
 
     tokenizer = Tokenizer.from_file(full_config["data"]["tokenizer"])
-    special_ids = tuple(tokenizer.token_to_id(name)
-                        for name in ("<s>", "</s>", "<pad>"))
-    assert all(value is not None for value in special_ids), "tokenizer 缺少 <s></s><pad>"
+    # MiniMind 6400 词表无 <s>/</s>/<pad>：BOS 复用 <|endoftext|>(0)，
+    # EOS 用 <|im_end|>(2)（与 PT 打包边界一致），pad 复用 <|endoftext|>（labels 已屏蔽）
+    bos_id = tokenizer.token_to_id("<|endoftext|>")
+    eos_id = tokenizer.token_to_id("<|im_end|>")
+    pad_id = tokenizer.token_to_id("<|endoftext|>")
+    assert None not in (bos_id, eos_id, pad_id), "tokenizer 缺少边界符"
+    special_ids = (bos_id, eos_id, pad_id)
 
     sft_inputs, sft_labels, stats = load_sft_samples(
         data_path, tokenizer, block_size, special_ids)

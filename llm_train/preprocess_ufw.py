@@ -53,9 +53,9 @@ TIERS = {
 }
 DJ_PROCESS = [
     # 只改内容、不减条数的三个 mapper + 长度过滤（阶段 2），清洗漏斗 100% 保留
-    {"clean_html": {}},
-    {"fix_unicode": {}},
-    {"whitespace_normalization": {}},
+    {"clean_html_mapper": {}},
+    {"fix_unicode_mapper": {}},
+    {"whitespace_normalization_mapper": {}},
     {"text_length_filter": {"min_len": 100, "max_len": 8000}},  # 单位：字符
 ]
 
@@ -73,7 +73,7 @@ def parse_args():
     download = sub.add_parser("download", help="按 tier 下载指定分片 parquet")
     add_tier(download)
     download.add_argument("--raw-dir", required=True)
-    download.add_argument("--repo", default="openbmb/Ultra-FineWeb-zh")
+    download.add_argument("--repo", default="openbmb/Ultra-FineWeb")
 
     clean = sub.add_parser("clean", help="score 粗筛 + Data-Juicer 四算子清洗")
     add_tier(clean)
@@ -100,12 +100,16 @@ def parse_args():
     return parser.parse_args()
 
 
+DEFAULT_REPO = "openbmb/Ultra-FineWeb"
+ZH_SUBDIR = "data/ultrafineweb_zh"
+
+
 def shard_files(repo, shards):
     """列出数据集 parquet 文件并按 1-based 分片号挑选，返回文件名列表。"""
     from huggingface_hub import HfApi
 
     files = sorted(name for name in HfApi().list_repo_files(repo, repo_type="dataset")
-                   if name.endswith(".parquet"))
+                   if name.endswith(".parquet") and ZH_SUBDIR in name)
     assert len(files) >= max(shards), (
         f"{repo} 只有 {len(files)} 个 parquet，无法满足分片 {shards}")
     return [files[index - 1] for index in shards]
@@ -245,13 +249,13 @@ def command_truncate(args):
 
 
 def command_pack(args):
-    """BOS+EOS 标记文档边界后连成一条 token 流，切 bin；100% token 利用。"""
+    """文档边界用 <|endoftext|>（MiniMind 6400 词表无 <s>/</s>），连成一条流切 bin。"""
     from tokenizers import Tokenizer
 
     tokenizer = Tokenizer.from_file(args.tokenizer)
-    bos_id = tokenizer.token_to_id("<s>")
-    eos_id = tokenizer.token_to_id("</s>")
-    assert bos_id is not None and eos_id is not None, "tokenizer 缺少 <s>/</s>"
+    eos_id = tokenizer.token_to_id("<|endoftext|>")
+    assert eos_id is not None, "tokenizer 缺少 <|endoftext|>"
+    bos_id = eos_id  # 记录口径：文档间以 <|im_end|>/EOS 分隔，BOS 复用同一 id
 
     docs = [json.loads(line) for line in Path(args.final).open(encoding="utf-8")]
     assert len(docs) > args.val_docs, "文档数不足以切出 val，调小 --val-docs"

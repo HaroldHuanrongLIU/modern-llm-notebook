@@ -101,7 +101,11 @@ def main():
     model, extra = FirstLLMForCausalLM.load_checkpoint(args.ckpt)
     model = model.to(device)
     tokenizer = Tokenizer.from_file(tokenizer_path)
-    special_ids = (tokenizer.token_to_id("<s>"), tokenizer.token_to_id("</s>"))
+    eos_id = tokenizer.token_to_id("<|endoftext|>")
+    if eos_id is None:
+        eos_id = tokenizer.token_to_id("</s>")
+    assert eos_id is not None, "tokenizer 缺少文档边界符"
+    special_ids = (eos_id, eos_id)  # MiniMind 6400 词表无 <s>/</s>，边界统一用 EOS
     print(f"checkpoint：{args.ckpt}（step {extra.get('step')}）｜tier={tier}")
 
     val_data = np.memmap(val_bin, dtype=np.uint16, mode="r")

@@ -85,6 +85,12 @@ class FirstLLMConfig(_ConfigBase):
         self.vocab_size = vocab_size
         self.hidden_size = hidden_size
         self.num_layers = num_layers
+        # HF 生成管线（DynamicCache 等）读标准字段名，同步别名
+        self.num_hidden_layers = num_layers
+        self.num_attention_heads = num_query_heads
+        self.num_key_value_heads = num_kv_heads
+        self.intermediate_size = ffn_size
+        self.num_experts_per_tok = None
         self.num_query_heads = num_query_heads
         self.num_kv_heads = num_kv_heads
         self.ffn_size = ffn_size
