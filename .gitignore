@@ -51,3 +51,7 @@ docs/
 
 # Notebook 数据缓存
 notebooks/**/*.parquet
+
+# llm_train 全量实验产物（bin/jsonl 数据与 checkpoint 不入库；manifest/指标 jsonl 随产物留在本机）
+llm_train/data/
+llm_train/checkpoints/

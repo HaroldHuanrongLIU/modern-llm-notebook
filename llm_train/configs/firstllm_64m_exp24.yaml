@@ -1,0 +1,89 @@
+# FirstLLM 64M 全量复现配置（exp24 验证架构 + Ultra-FineWeb-zh 两档数据）
+#
+# 事实来源（改动前先核对）：
+#   - 数据口径以 WORK_记录_firstllm数据清洗.md 为准：预训练数据是用户自己筛选的
+#     Ultra-FineWeb-zh（DJ 1.5.5 清洗），不是 MiniMind 官方数据；MiniMind 仅作对照基线
+#   - 训练/评测协议见 数据实验方案_精选数据超越MiniMind.md
+#   - 历史评测数字见 FirstLLM_最终汇总.md（2026-08-21，historical）
+#
+# 数据要点（WORK 记录实测）：
+#   - mini 档：4 片、score>=0.8、按真实 BPE token 截断到 2.7 亿（216,186 文档，
+#     截断处 score 0.8833）；full 档：20 片、score>=0.7、目标 <22.1 亿 token
+#   - 清洗不做 SimHash 去重：DJ num_blocks=4 分桶导致 57% 假阳性误删；
+#     Ultra-FineWeb 上游已 DUP 去重，实测重复率约 0.1%
+#   - token 计数必须用真实 BPE：字符/2 估算会低估约 1.7 倍（实测字符/token=1.26）
+
+run:
+  name: firstllm_64m_exp24
+  tier: full            # mini | full，决定数据档、步数和学习率
+  seeds: [42, 777]      # 双 seed，报告均值±标准差
+
+model:
+  vocab_size: 6400        # 自训练 BPE 词表（第 1 站 mini_tokenizer.json）
+  hidden_size: 768
+  num_layers: 8
+  num_query_heads: 8      # GQA：8 个 query head
+  num_kv_heads: 4         # 4 个 KV head，每 2 个 query head 共享 1 组 K/V
+  ffn_size: 2304          # SwiGLU 三层投影的中间维度
+  rope_theta: 10000
+  norm_eps: 1.0e-6
+  qk_norm: true           # 注意力打分前对 Q/K 各做一次 RMSNorm
+  tie_word_embeddings: true
+  # 参数量以 modeling_firstllm.py 初始化后的实测打印为准：
+  # 本配置实测约 61.6M（tied）；实验记录口径 66.3M（exp24，DenseLM 64M 档）
+
+data:
+  tokenizer: notebooks/part1-foundation/mini_tokenizer.json
+  block_size: 512         # 训练块长度；bin 打包时 BOS+EOS 标记文档边界，100% token 利用
+  mini:
+    train_bin: llm_train/data/ufw_mini/train.bin
+    val_bin: llm_train/data/ufw_mini/val.bin
+    manifest: llm_train/data/ufw_mini/manifest.json   # 216,186 文档 / 2.7 亿 token
+  full:
+    train_bin: llm_train/data/ufw_full/train.bin
+    val_bin: llm_train/data/ufw_full/val.bin
+    manifest: llm_train/data/ufw_full/manifest.json   # 目标 <22.1 亿 token
+
+train:
+  batch_size: 128          # 128 x 512 = 64K token/step
+  max_steps_mini: 5120     # 0.33B / 64K
+  max_steps_full: 34560    # 2.21B / 64K
+  lr_mini: 2.0e-3          # mini 数据档最优学习率
+  lr_full: 1.0e-3          # full 数据档最优学习率
+  warmup_steps: 100
+  weight_decay: 0.1
+  grad_clip: 1.0
+  lr_schedule: cosine      # 方案仅记录 warmup 100；余弦退火为通用默认，可按实验记录调整
+  lr_min_ratio: 0.1        # 退火终点 = lr x 0.1
+  eval_interval: 500       # 每 N step 在打包 val 上测一次 PPL（我们口径）
+  log_interval: 10
+  dtype: bfloat16          # 单卡（MI300X/ROCm）实测使用 bf16 混合精度
+
+sft:
+  data: llm_train/data/belle_sft.jsonl   # conversations 格式 JSONL，沿用仓库教学语料
+  block_size: 512
+  batch_size: 64
+  max_epochs: 2
+  lr: 1.0e-4               # SFT 沿用小学习率（方案未单独记录，可按实验记录调整）
+  warmup_steps: 50
+  weight_decay: 0.1
+  assistant_only: true     # Chat Template 中 user/问题部分 labels=-100，只让回答承担 loss
+
+eval:
+  # PPL 双口径：打包 val（我们口径，跨文档上下文）+ 单文档 val（MiniMind 口径，文档独立）
+  ppl_script: llm_train/scripts/run_ppl.py
+  lm_eval_script: llm_train/scripts/run_lm_eval.sh
+  # lm-eval 11 任务，统一协议：固定 harness / 0-shot / acc_norm
+  lm_eval_tasks:
+    - ceval                # 中文学科知识
+    - cmmlu                # 中文学科知识
+    - mmlu                 # 英文学科知识
+    - arc_easy
+    - arc_challenge
+    - piqa
+    - openbookqa
+    - hellaswag
+    - siqa                 # social_iqa
+    - winogrande
+    - gsm8k                # harness 内 exact_match；greedy + 5 次采样见生成评测
+  seed_note: 每个实验 2 seed，报告均值±std；gsm8k 另做 greedy + 5 次采样
